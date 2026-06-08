@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
@@ -39,12 +40,18 @@ type (
 		mutexes map[string]*sync.Mutex
 		dir     string // the directory where scribble will create the database
 		log     Logger // the logger scribble will log to
+		nodeID  string
+		peers   []string
+		client  *http.Client
 	}
 )
 
 // Options uses for specification of working golang-scribble
 type Options struct {
-	Logger // the logger scribble will use (configurable)
+	Logger     // the logger scribble will use (configurable)
+	NodeID     string
+	Peers      []string
+	HTTPClient *http.Client
 }
 
 // New creates a new scribble database at the desired directory location, and
@@ -72,6 +79,9 @@ func New(dir string, options *Options) (*Driver, error) {
 		dir:     dir,
 		mutexes: make(map[string]*sync.Mutex),
 		log:     opts.Logger,
+		nodeID:  opts.NodeID,
+		peers:   append([]string(nil), opts.Peers...),
+		client:  opts.HTTPClient,
 	}
 
 	// if the database already exists, just use it
@@ -108,7 +118,11 @@ func (d *Driver) Write(collection, resource string, v interface{}) error {
 	fnlPath := filepath.Join(dir, resource+".json")
 	tmpPath := fnlPath + ".tmp"
 
-	return write(dir, tmpPath, fnlPath, v)
+	if err := write(dir, tmpPath, fnlPath, v); err != nil {
+		return err
+	}
+
+	return d.replicateWrite(collection, resource, v)
 }
 
 func write(dir, tmpPath, dstPath string, v interface{}) error {
@@ -231,11 +245,17 @@ func (d *Driver) Delete(collection, resource string) error {
 
 	// remove directory and all contents
 	case fi.Mode().IsDir():
-		return os.RemoveAll(dir)
+		if err := os.RemoveAll(dir); err != nil {
+			return err
+		}
+		return d.replicateDelete(collection, resource)
 
 	// remove file
 	case fi.Mode().IsRegular():
-		return os.RemoveAll(dir + ".json")
+		if err := os.RemoveAll(dir + ".json"); err != nil {
+			return err
+		}
+		return d.replicateDelete(collection, resource)
 	}
 
 	return nil
