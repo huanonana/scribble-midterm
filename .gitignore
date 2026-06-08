@@ -26,3 +26,7 @@ _testmain.go
 #
 .DS_Store
 TODO
+
+# Local Go caches for sandboxed builds
+.gocache/
+.gomodcache/
