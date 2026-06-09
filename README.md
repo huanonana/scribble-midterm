@@ -1,129 +1,142 @@
-Scribble [![GoDoc](https://godoc.org/github.com/boltdb/bolt?status.svg)](http://godoc.org/github.com/sdomino/scribble) [![Go Report Card](https://goreportcard.com/badge/github.com/sdomino/scribble)](https://goreportcard.com/report/github.com/sdomino/scribble)
---------
+# Scribble Distributed
 
-A tiny JSON database in Golang
+Scribble Distributed là phiên bản mở rộng của dự án mã nguồn mở
+[sdomino/scribble](https://github.com/sdomino/scribble). Scribble gốc là một cơ
+sở dữ liệu JSON nhúng viết bằng Go, lưu mỗi collection thành một thư mục và mỗi
+resource thành một tệp JSON.
 
-### Installation
+Dự án được thực hiện cho bài tập lớn về hệ phân tán. Nhóm giữ lại API lưu trữ
+cục bộ của Scribble và bổ sung hai tính năng trao đổi dữ liệu giữa nhiều node.
 
-Install using `go get github.com/sdomino/scribble`.
+## Hai tính năng mới
 
-### Usage
+### 1. Sao chép dữ liệu giữa các node qua HTTP
 
-```go
-// a new scribble driver, providing the directory where it will be writing to,
-// and a qualified logger if desired
-db, err := scribble.New(dir, nil)
-if err != nil {
-  fmt.Println("Error", err)
-}
+Sau khi `Write` hoặc `Delete` thành công trên node hiện tại, thao tác được đóng
+gói thành một `Operation` và gửi tới các peer đã cấu hình.
 
-// Write a fish to the database
-fish := Fish{}
-if err := db.Write("fish", "onefish", fish); err != nil {
-  fmt.Println("Error", err)
-}
+- Thao tác ghi và xóa mới được sao chép sang các node khác.
+- Peer nhận thao tác chỉ áp dụng vào dữ liệu local, không gửi tiếp lần nữa.
+- Cơ chế này ngăn vòng lặp replication giữa các node.
+- Khi peer không phản hồi, node gọi thao tác nhận được lỗi replication.
 
-// Read a fish from the database (passing fish by reference)
-onefish := Fish{}
-if err := db.Read("fish", "onefish", &onefish); err != nil {
-  fmt.Println("Error", err)
-}
+### 2. Snapshot và đồng bộ node bằng `SyncFrom`
 
-// Read all fish from the database, unmarshaling the response.
-records, err := db.ReadAll("fish")
-if err != nil {
-  fmt.Println("Error", err)
-}
+Một node có thể xuất toàn bộ trạng thái hiện tại qua endpoint snapshot. Node
+mới hoặc node cần phục hồi sử dụng `SyncFrom` để tải và merge dữ liệu đó.
 
-fishies := []Fish{}
-for _, f := range records {
-  fishFound := Fish{}
-  if err := json.Unmarshal([]byte(f), &fishFound); err != nil {
-    fmt.Println("Error", err)
-  }
-  fishies = append(fishies, fishFound)
-}
+- Dùng để khởi tạo một node mới.
+- Dùng để phục hồi dữ liệu từ một peer đang hoạt động.
+- Snapshot được áp dụng local nên không tạo ra hàng loạt thao tác replication.
 
-// Delete a fish from the database
-if err := db.Delete("fish", "onefish"); err != nil {
-  fmt.Println("Error", err)
-}
+## Kiến trúc tổng quát
 
-// Delete all fish from the database
-if err := db.Delete("fish", ""); err != nil {
-  fmt.Println("Error", err)
-}
+```text
+Client
+  |
+  v
+Node 1: ghi dữ liệu local
+  |---- POST /scribble/v1/operations ----> Node 2
+  |---- POST /scribble/v1/operations ----> Node 3
+
+Node mới
+  |---- GET /scribble/v1/snapshot -------> Node đang hoạt động
+  `---- SyncFrom: merge dữ liệu vào local
 ```
 
-## Documentation
-- Complete documentation is available on [godoc](http://godoc.org/github.com/sdomino/scribble).
-- Coverage Report is available on [gocover](https://gocover.io/github.com/sdomino/scribble)
+Đây là prototype phục vụ học tập, chưa phải hệ thống consensus. Dự án chưa hỗ
+trợ quorum, leader election hoặc tự động phát hiện xung đột ghi đồng thời.
 
-## Todo/Doing
-- Support for windows
-- Better support for concurrency
-- Better support for sub collections
-- More methods to allow different types of reads/writes
-- More tests (you can never have enough!)
+## Cấu trúc dự án
 
-## Distributed coursework extension
+```text
+scribble.go                 API Scribble gốc và tích hợp replication
+distributed.go              Operation, HTTP handler, snapshot và SyncFrom
+distributed_test.go         Kiểm thử các tính năng phân tán
+example/distributed/main.go Chương trình demo chạy nhiều node
+deliverables/               Báo cáo và slide thuyết trình
+```
 
-This fork adds two distributed-data features:
+## Yêu cầu cài đặt
 
-1. **HTTP peer replication:** successful `Write` and `Delete` operations are
-   forwarded to configured peers. Remote operations are applied locally without
-   being forwarded again, preventing replication loops.
-2. **Snapshot bootstrap/sync:** a node exposes a JSON snapshot endpoint and a
-   new or recovering node can merge that snapshot with `SyncFrom`.
+- Go có hỗ trợ Go Modules
+- Git
+- PowerShell hoặc terminal tương đương
 
-The implementation is intentionally small enough to study. It demonstrates
-node-to-node communication and replication, but it is not a consensus system.
-Concurrent writes use last-arriving-write-wins behavior.
-
-### Run the tests
+## Chạy kiểm thử
 
 ```powershell
 go test ./...
+go vet ./...
 ```
 
-### Two-node experiment
+## Thực nghiệm replication với hai node
 
-Start the replica:
+Mở terminal thứ nhất và chạy node phụ:
 
 ```powershell
 go run ./example/distributed -id node-2 -addr :8082 -data ./demo/node-2
 ```
 
-Start the primary and configure it to replicate to the replica:
+Mở terminal thứ hai và chạy node chính:
 
 ```powershell
 go run ./example/distributed -id node-1 -addr :8081 -data ./demo/node-1 -peers http://localhost:8082
 ```
 
-Write through node 1, then read the replicated value from node 2:
+Ghi dữ liệu qua node 1:
 
 ```powershell
-Invoke-RestMethod -Method Put -Uri http://localhost:8081/notes/demo -ContentType application/json -Body '{"title":"Distributed Scribble","body":"replicated from node-1"}'
+Invoke-RestMethod -Method Put `
+  -Uri http://localhost:8081/notes/demo `
+  -ContentType application/json `
+  -Body '{"title":"Scribble Distributed","body":"Dữ liệu từ node-1"}'
+```
+
+Đọc dữ liệu đã được sao chép từ node 2:
+
+```powershell
 Invoke-RestMethod -Method Get -Uri http://localhost:8082/notes/demo
 ```
 
-Bootstrap a third node from node 1:
+## Thực nghiệm snapshot với node thứ ba
 
 ```powershell
-go run ./example/distributed -id node-3 -addr :8083 -data ./demo/node-3 -sync-from http://localhost:8081
+go run ./example/distributed `
+  -id node-3 `
+  -addr :8083 `
+  -data ./demo/node-3 `
+  -sync-from http://localhost:8081
+
 Invoke-RestMethod -Method Get -Uri http://localhost:8083/notes/demo
 ```
 
-### API additions
+## Ví dụ sử dụng API
 
 ```go
-db, _ := scribble.New("./data", &scribble.Options{
+db, err := scribble.New("./data", &scribble.Options{
     NodeID: "node-1",
-    Peers: []string{"http://localhost:8082"},
+    Peers:  []string{"http://localhost:8082"},
 })
+if err != nil {
+    log.Fatal(err)
+}
 
 http.ListenAndServe(":8081", db.HTTPHandler())
 
-// On a new/recovering node:
-_ = db.SyncFrom("http://localhost:8081")
+// Đồng bộ một node mới từ node đang hoạt động.
+if err := db.SyncFrom("http://localhost:8081"); err != nil {
+    log.Fatal(err)
+}
 ```
+
+## Tài liệu bài tập
+
+- `deliverables/Bao_cao_Scribble_Phan_tan.docx`: báo cáo bài tập lớn.
+- `deliverables/Slides_Scribble_Phan_tan.pptx`: slide thuyết trình.
+
+## Nguồn tham khảo và giấy phép
+
+Dự án được phát triển dựa trên
+[sdomino/scribble](https://github.com/sdomino/scribble) và tiếp tục sử dụng
+giấy phép MIT trong tệp `LICENSE`.
