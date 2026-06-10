@@ -132,8 +132,7 @@ if err := db.SyncFrom("http://localhost:8081"); err != nil {
 
 ## Tài liệu bài tập
 
-- `deliverables/Bao_cao_Scribble_Phan_tan.docx`: báo cáo bài tập lớn.
-- `deliverables/Slides_Scribble_Phan_tan.pptx`: slide thuyết trình.
+- deliverables/Môn Ưng Dụng Phân Tán (1).pptx`: slide thuyết trình.
 
 ## Nguồn tham khảo và giấy phép
 
